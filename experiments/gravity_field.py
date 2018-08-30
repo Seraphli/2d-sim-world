@@ -1,6 +1,4 @@
 import numpy as np
-from tqdm import trange
-import sys
 import multiprocessing as mp
 
 G = 9.8
@@ -30,16 +28,19 @@ class GravityField(object):
         self.x = width
         self.y = height
         self.z = 100
-        self.m = 50
-        self.point_num = 20
+        self.m = (5, 50)
+        self.point_num = 30
         self.pool = mp.Pool(mp.cpu_count() - 2)
 
     def reset(self):
+        z = np.random.normal(0, self.z / 3, self.point_num)
+        m_range = self.m[1] - self.m[0]
+        m = np.random.normal(m_range / 2, m_range / 6, self.point_num)
+        m = np.abs(m - m_range / 2) + self.m[0]
         self.mass_point = [
             np.random.randint(0, self.x + 1, self.point_num),
             np.random.randint(0, self.y + 1, self.point_num),
-            np.random.randint(-self.z, self.z + 1, self.point_num),
-            np.random.randint(0, self.m + 1, self.point_num)]
+            z, m]
         self.mass_point = np.stack(self.mass_point, 1)
         self.world = np.zeros((self.x, self.y))
         results = self.pool.map(func, [
