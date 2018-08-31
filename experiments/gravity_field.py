@@ -1,7 +1,5 @@
 import numpy as np
 
-G = 9.8
-
 
 class GravityField(object):
     def __init__(self, width=1280, height=720):
@@ -10,6 +8,7 @@ class GravityField(object):
         self.z = 100
         self.m = (5, 50)
         self.point_num = 3
+        self.G = 9.8
 
     def reset(self):
         m_range = self.m[1] - self.m[0]
@@ -30,7 +29,7 @@ class GravityField(object):
             r = np.sqrt(np.sum(np.power(mass_point[n] - world, 2), 2))
             r_3 = np.repeat(np.reshape(r, (self.x, self.y, 1)), 3, 2)
             _v = np.divide(np.divide(np.divide(
-                mass_point[n] - world, r_3) * G * m[n], r_3), r_3)
+                mass_point[n] - world, r_3) * self.G * m[n], r_3), r_3)
             z += np.dot(_v, np.array([0, 0, 1]))
         self.world = z
         self.world = (self.world - np.min(self.world)) / \
