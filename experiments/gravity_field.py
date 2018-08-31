@@ -1,5 +1,4 @@
 import numpy as np
-import multiprocessing as mp
 
 G = 9.8
 
@@ -11,7 +10,6 @@ class GravityField(object):
         self.z = 100
         self.m = (5, 50)
         self.point_num = 3
-        self.pool = mp.Pool(mp.cpu_count() - 2)
 
     def reset(self):
         m_range = self.m[1] - self.m[0]
