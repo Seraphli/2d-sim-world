@@ -1,6 +1,8 @@
 import numpy as np
 import pickle
 
+EPSILON = 0.05
+
 
 def create_mesh_grid(w, h):
     x = np.arange(0, w, 1)
@@ -21,19 +23,20 @@ class Cloud(object):
         self.state = 'Stop'
 
     def start_rain(self):
-        self.center = [np.random.randint(0, self.w, 1)[0],
-                       np.random.randint(0, self.h, 1)[0]]
+        self.center = [np.random.randint(50, self.w - 50, 1)[0],
+                       np.random.randint(50, self.h - 50, 1)[0]]
         self.center = np.array(self.center)
         self.radius = np.random.randint(self.radius_limit[0],
                                         self.radius_limit[1] + 1, 1)[0]
         self.speed = [np.random.randint(-5, 5, 1)[0],
                       np.random.randint(-5, 5, 1)[0]]
         self.speed = np.array(self.speed)
-        self.duration = np.random.randint(200, 500, 1)[0]
+        self.duration = np.random.randint(400, 2000, 1)[0]
         self.i = 1
         self.rain_drop_num = np.random.randint(
             self.rain_drop_limit[0], self.rain_drop_limit[1] + 1, 1)[0]
         self.state = 'Raining'
+        print(self.state)
 
     def rain_fall_step(self):
         if self.i >= self.duration:
@@ -43,15 +46,15 @@ class Cloud(object):
                       np.random.randint(0, self.radius, self.rain_drop_num)]
         rain_drops = np.stack(rain_drops, 1)
         rain_drops = rain_drops + self.center
-        indexes = np.where(np.logical_and(rain_drops[:, 0] < self.w,
-                                          rain_drops[:, 1] < self.h))
+        indexes = np.where(np.logical_and(rain_drops[:, 0] < self.w - 50,
+                                          rain_drops[:, 1] < self.h - 50))
 
         rain_drops = rain_drops[indexes]
-        indexes = np.where(np.logical_and(rain_drops[:, 0] > 0,
-                                          rain_drops[:, 1] > 0))
+        indexes = np.where(np.logical_and(rain_drops[:, 0] > 50,
+                                          rain_drops[:, 1] > 50))
         rain_drops = rain_drops[indexes]
         v = np.zeros((self.w, self.h))
-        v[rain_drops[:, 0], rain_drops[:, 1]] = 0.2
+        v[rain_drops[:, 0], rain_drops[:, 1]] = 0.3
         if np.any(rain_drops):
             if self.i % 10 == 0:
                 self.center += self.speed
@@ -126,10 +129,8 @@ class World(object):
     @property
     def value(self):
         # Display water level
-        if np.max(self.attr['water_level']) > 1:
-            v = self.attr['water_level'] / np.max(self.attr['water_level'])
-        else:
-            v = self.attr['water_level']
+        v = np.copy(self.attr['water_level'])
+        v[v > 1] = 1
 
         # Display height map
         # v = self.attr['height'].value / np.max(self.attr['height'].value)
@@ -165,12 +166,14 @@ class Weather(object):
                                                 self.world.height - 2, 1)), 8,
                             2)
         diff = centers - blocks
-        wl_cond = self.world.attr['water_level'][1:-1, 1:-1] > 0
+        water = self.world.attr['humidity'] + \
+                self.world.attr['water_level']
+        wl_cond = water[1:-1, 1:-1] >= EPSILON
         wl_cond = np.repeat(
             np.reshape(wl_cond,
                        (self.world.width - 2, self.world.height - 2, 1)),
             8, 2)
-        cond = np.logical_and(diff > 0.1, wl_cond)
+        cond = np.logical_and(diff > EPSILON * 2, wl_cond)
         return cond, diff, shift
 
     def step(self):
@@ -179,48 +182,69 @@ class Weather(object):
         h = self.cloud.rain_fall_step()
         if h is not None:
             # Water level will rise if humidity > 1
-            self.world.attr['humidity'] += h
-            overflow = self.world.attr['humidity'] - 1
+            water = self.world.attr['humidity'] + \
+                    self.world.attr['water_level'] + h
+            overflow = water - 1
             overflow[overflow < 0] = 0
-            self.world.attr['water_level'] += overflow
-            self.world.attr['humidity'][self.world.attr['humidity'] > 1] = 1
+            self.world.attr['water_level'] = overflow
+            self.world.attr['humidity'] = water - overflow
 
-            # Form a new altitude
-            z = self.world.attr['water_level'] + self.world.attr['height'].value
+            z = self.world.attr['height'].value + self.world.attr['humidity'] \
+                + self.world.attr['water_level']
             # Find the gradient
             cond, diff, shift = self.cal_cond(z)
-            while np.any(cond):
-                # np.argmax(diff, 2)
+            if np.any(cond):
+                indexes = np.argwhere(cond)
+                point_dict = {}
+                # print('l1: {}'.format(len(indexes)))
+                for index in indexes:
+                    if (index[0], index[1]) in point_dict:
+                        point_dict[(index[0], index[1])]. \
+                            append((index[2],
+                                    diff[index[0], index[1], index[2]]))
+                    else:
+                        point_dict[(index[0], index[1])] = \
+                            [(index[2],
+                              diff[index[0], index[1], index[2]])]
+
+                indexes = []
+                for k, v in point_dict.items():
+                    v = sorted(v, key=lambda x: x[1], reverse=True)
+                    indexes.append((k[0], k[1], v[0][0]))
+
                 # Move water according to water direction
-                for index in np.argwhere(cond):
-                    print(index)
+                # print('l2: {}'.format(len(indexes)))
+                for index in indexes:
+                    # print(index)
                     i = np.array([index[0], index[1]])
                     real_i = i + np.array([1, 1])
                     s = np.array(shift[index[2]])
                     real_next_i = real_i + s
-                    d = diff[i[0], i[1], index[2]]
-                    self.world.attr['water_level'][real_i[0],
-                                                   real_i[1]] -= d / 2
-                    self.world.attr['water_level'][real_next_i[0],
-                                                   real_next_i[1]] += d / 2
-                    if self.world.attr['water_level'][real_i[0],
-                                                      real_i[1]] < 0 or \
-                            self.world.attr['water_level'][real_next_i[0],
-                                                           real_next_i[1]] < 0:
-                        2 == 3
-                z = self.world.attr['water_level'] + \
-                    self.world.attr['height'].value
-                cond, diff, shift = self.cal_cond(z)
+                    d = diff[index[0], index[1], index[2]]
+                    if d > EPSILON * 2 * 2:
+                        c = d / 4
+                    else:
+                        c = EPSILON
+                    self.world.attr['humidity'][real_i[0],
+                                                real_i[1]] -= c
+                    self.world.attr['humidity'][real_next_i[0],
+                                                real_next_i[1]] += c
+                    if self.world.attr['humidity'][real_i[0],
+                                                   real_i[1]] < 0 or \
+                            self.world.attr['humidity'][real_next_i[0],
+                                                        real_next_i[1]] < 0:
+                        print('error')
+                # print('loop')
 
         # Calculate evaporation
-        self.world.attr['humidity'] += self.world.attr['water_level']
-        self.world.attr['humidity'] -= np.ones((self.world.width,
-                                                self.world.height)) * 0.0005
-        self.world.attr['humidity'][self.world.attr['humidity'] < 0] = 0
-        overflow = self.world.attr['humidity'] - 1
+        water = self.world.attr['humidity'] + \
+                self.world.attr['water_level']
+        water -= np.ones((self.world.width, self.world.height)) * 0.001
+        water[water < 0] = 0
+        overflow = water - 1
         overflow[overflow < 0] = 0
         self.world.attr['water_level'] = overflow
-        self.world.attr['humidity'][self.world.attr['humidity'] > 1] = 1
+        self.world.attr['humidity'] = water - overflow
         self.t += 1
         if self.t % 50 == 0 and self.cloud.state == 'Stop':
             self.cloud.start_rain()
