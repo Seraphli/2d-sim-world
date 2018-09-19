@@ -189,52 +189,52 @@ class Weather(object):
             self.world.attr['water_level'] = overflow
             self.world.attr['humidity'] = water - overflow
 
-            z = self.world.attr['height'].value + self.world.attr['humidity'] \
-                + self.world.attr['water_level']
-            # Find the gradient
-            cond, diff, shift = self.cal_cond(z)
-            if np.any(cond):
-                indexes = np.argwhere(cond)
-                point_dict = {}
-                # print('l1: {}'.format(len(indexes)))
-                for index in indexes:
-                    if (index[0], index[1]) in point_dict:
-                        point_dict[(index[0], index[1])]. \
-                            append((index[2],
-                                    diff[index[0], index[1], index[2]]))
-                    else:
-                        point_dict[(index[0], index[1])] = \
-                            [(index[2],
-                              diff[index[0], index[1], index[2]])]
+        z = self.world.attr['height'].value + self.world.attr['humidity'] \
+            + self.world.attr['water_level']
+        # Find the gradient
+        cond, diff, shift = self.cal_cond(z)
+        if np.any(cond):
+            indexes = np.argwhere(cond)
+            point_dict = {}
+            # print('l1: {}'.format(len(indexes)))
+            for index in indexes:
+                if (index[0], index[1]) in point_dict:
+                    point_dict[(index[0], index[1])]. \
+                        append((index[2],
+                                diff[index[0], index[1], index[2]]))
+                else:
+                    point_dict[(index[0], index[1])] = \
+                        [(index[2],
+                          diff[index[0], index[1], index[2]])]
 
-                indexes = []
-                for k, v in point_dict.items():
-                    v = sorted(v, key=lambda x: x[1], reverse=True)
-                    indexes.append((k[0], k[1], v[0][0]))
+            indexes = []
+            for k, v in point_dict.items():
+                v = sorted(v, key=lambda x: x[1], reverse=True)
+                indexes.append((k[0], k[1], v[0][0]))
 
-                # Move water according to water direction
-                # print('l2: {}'.format(len(indexes)))
-                for index in indexes:
-                    # print(index)
-                    i = np.array([index[0], index[1]])
-                    real_i = i + np.array([1, 1])
-                    s = np.array(shift[index[2]])
-                    real_next_i = real_i + s
-                    d = diff[index[0], index[1], index[2]]
-                    if d > EPSILON * 2 * 2:
-                        c = d / 4
-                    else:
-                        c = EPSILON
-                    self.world.attr['humidity'][real_i[0],
-                                                real_i[1]] -= c
-                    self.world.attr['humidity'][real_next_i[0],
-                                                real_next_i[1]] += c
-                    if self.world.attr['humidity'][real_i[0],
-                                                   real_i[1]] < 0 or \
-                            self.world.attr['humidity'][real_next_i[0],
-                                                        real_next_i[1]] < 0:
-                        print('error')
-                # print('loop')
+            # Move water according to water direction
+            # print('l2: {}'.format(len(indexes)))
+            for index in indexes:
+                # print(index)
+                i = np.array([index[0], index[1]])
+                real_i = i + np.array([1, 1])
+                s = np.array(shift[index[2]])
+                real_next_i = real_i + s
+                d = diff[index[0], index[1], index[2]]
+                if d > EPSILON * 2 * 2:
+                    c = d / 4
+                else:
+                    c = EPSILON
+                self.world.attr['humidity'][real_i[0],
+                                            real_i[1]] -= c
+                self.world.attr['humidity'][real_next_i[0],
+                                            real_next_i[1]] += c
+                if self.world.attr['humidity'][real_i[0],
+                                               real_i[1]] < 0 or \
+                        self.world.attr['humidity'][real_next_i[0],
+                                                    real_next_i[1]] < 0:
+                    print('error')
+            # print('loop')
 
         # Calculate evaporation
         water = self.world.attr['humidity'] + \
