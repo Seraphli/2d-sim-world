@@ -1,4 +1,5 @@
 import numpy as np
+import pickle
 
 
 def create_mesh_grid(w, h):
@@ -60,17 +61,14 @@ class Cloud(object):
         return v
 
 
-class World(object):
-    def __init__(self, w, h):
-        self.w = w
-        self.h = h
-        self.mesh_grid = create_mesh_grid(w, h)
-        self.attr = {
-            'z': np.zeros((w, h)),
-            'humidity': np.zeros((w, h))
-        }
+class HeightMap(object):
+    def __init__(self, width=400, height=400):
+        self.w = width
+        self.h = height
+        self.mesh_grid = create_mesh_grid(self.w, self.h)
+        self.value = None
 
-    def init_height_map(self):
+    def create(self):
         z_lim = (-100, 100)
         point_num = 4
         m_lim = (20, 50)
@@ -91,73 +89,164 @@ class World(object):
             _v = np.divide(np.divide(np.divide(
                 mass_point[n] - self.mesh_grid, r_3) * m[n], r_3), r_3)
             z += np.dot(_v, np.array([0, 0, 1]))
-        self.attr['z'] = (z - np.min(z)) / (np.max(z) - np.min(z))
+        self.value = (z - np.min(z)) / (np.max(z) - np.min(z))
+
+    def save(self):
+        with open('height_map.pkl', 'wb') as f:
+            pickle.dump(self.value, f)
+
+    def load(self):
+        with open('height_map.pkl', 'rb') as f:
+            self.value = pickle.load(f)
+
+
+class World(object):
+    def __init__(self, w, h):
+        self.width = w
+        self.height = h
+        self.mesh_grid = create_mesh_grid(w, h)
+        self.attr = {
+            'height': HeightMap(),
+            'water_level': np.zeros((w, h)),
+            'humidity': np.zeros((w, h))
+        }
+
+    def create(self):
+        self.attr['height'].create()
+        self.attr['height'].save()
+
+    def save(self):
+        with open('world.pkl', 'wb') as f:
+            pickle.dump(self.attr, f)
+
+    def load(self):
+        with open('world.pkl', 'rb') as f:
+            self.attr = pickle.load(f)
 
     @property
     def value(self):
-        z = self.attr['humidity']
-        color = (z * 0xff).astype(np.uint32)
+        # Display water level
+        if np.max(self.attr['water_level']) > 1:
+            v = self.attr['water_level'] / np.max(self.attr['water_level'])
+        else:
+            v = self.attr['water_level']
+
+        # Display height map
+        # v = self.attr['height'].value / np.max(self.attr['height'].value)
+
+        # Display humidity
+        # v = self.attr['humidity']
+        color = (v * 0xff).astype(np.uint32)
         return color + color * 0x100 + color * 0x10000
 
 
-class MapGenerate(object):
-    def __init__(self, width=1280, height=720):
-        self.w = width
-        self.h = height
-        self.world = World(width, height)
+class Weather(object):
+    def __init__(self, world):
+        self.world = world
+        self.cloud = Cloud(self.world.width, self.world.height)
+        self.cloud.start_rain()
         self.t = 0
 
-    def reset(self):
-        self.world.init_height_map()
-        self.cloud = Cloud(self.w, self.h)
-        self.cloud.start_rain()
+    def cal_cond(self, z):
+        shift = []
+        blocks = []
+        for i in range(-1, 2):
+            for j in range(-1, 2):
+                if i == 0 and j == 0:
+                    continue
+                shift.append([i, j])
+                block = z[1 + i:-1 + i if -1 + i < 0 else None,
+                        1 + j:-1 + j if -1 + j < 0 else None]
+                blocks.append(block)
+
+        blocks = np.stack(blocks, 2)
+        center = z[1:-1, 1:-1]
+        centers = np.repeat(np.reshape(center, (self.world.width - 2,
+                                                self.world.height - 2, 1)), 8,
+                            2)
+        diff = centers - blocks
+        wl_cond = self.world.attr['water_level'][1:-1, 1:-1] > 0
+        wl_cond = np.repeat(
+            np.reshape(wl_cond,
+                       (self.world.width - 2, self.world.height - 2, 1)),
+            8, 2)
+        cond = np.logical_and(diff > 0.1, wl_cond)
+        return cond, diff, shift
 
     def step(self):
+        # 关于湿度,如果水分大于周边的几倍就可以开始扩散
+        # Rain drop
         h = self.cloud.rain_fall_step()
         if h is not None:
+            # Water level will rise if humidity > 1
             self.world.attr['humidity'] += h
-            indexes = np.where(self.world.attr['humidity'] > 1)
-            if len(indexes[0]) > 0:
-                _index = []
-                for i in range(len(indexes[0])):
-                    _index.append([indexes[0][i], indexes[1][i]])
-                indexes = _index
-                shift = [[0, 0], [0, 1], [1, 0], [0, -1], [-1, 0],
-                         [1, 1], [1, -1], [-1, 1], [-1, -1]]
-                while len(indexes) > 0:
-                    print(len(indexes))
-                    index = indexes[0]
-                    print(index)
-                    _index = [np.array(index) + np.array(s) for s in shift]
-                    _index = [_i for _i in _index
-                              if 0 <= _i[0] < self.w and 0 <= _i[1] < self.h]
-                    z_list = [self.world.attr['z'][_i[0], _i[1]]
-                              for _i in _index]
-                    next_index = np.array(_index)[np.argmin(z_list)]
-                    if np.all(next_index == index):
-                        self.world.attr['humidity'][index[0], index[1]] = 1
-                    else:
-                        self.world.attr['humidity'][
-                            next_index[0], next_index[1]] += \
-                            self.world.attr['humidity'][index[0], index[1]] - 1
-                        self.world.attr['humidity'][index[0], index[1]] = 1
-                        if self.world.attr['humidity'][
-                            next_index[0], next_index[1]] > 1:
-                            indexes.append(next_index)
-                    indexes = indexes[1:]
+            overflow = self.world.attr['humidity'] - 1
+            overflow[overflow < 0] = 0
+            self.world.attr['water_level'] += overflow
+            self.world.attr['humidity'][self.world.attr['humidity'] > 1] = 1
 
-        self.world.attr['humidity'] -= np.ones((self.w, self.h)) * 0.0005
+            # Form a new altitude
+            z = self.world.attr['water_level'] + self.world.attr['height'].value
+            # Find the gradient
+            cond, diff, shift = self.cal_cond(z)
+            while np.any(cond):
+                # np.argmax(diff, 2)
+                # Move water according to water direction
+                for index in np.argwhere(cond):
+                    print(index)
+                    i = np.array([index[0], index[1]])
+                    real_i = i + np.array([1, 1])
+                    s = np.array(shift[index[2]])
+                    real_next_i = real_i + s
+                    d = diff[i[0], i[1], index[2]]
+                    self.world.attr['water_level'][real_i[0],
+                                                   real_i[1]] -= d / 2
+                    self.world.attr['water_level'][real_next_i[0],
+                                                   real_next_i[1]] += d / 2
+                    if self.world.attr['water_level'][real_i[0],
+                                                      real_i[1]] < 0 or \
+                            self.world.attr['water_level'][real_next_i[0],
+                                                           real_next_i[1]] < 0:
+                        2 == 3
+                z = self.world.attr['water_level'] + \
+                    self.world.attr['height'].value
+                cond, diff, shift = self.cal_cond(z)
+
+        # Calculate evaporation
+        self.world.attr['humidity'] += self.world.attr['water_level']
+        self.world.attr['humidity'] -= np.ones((self.world.width,
+                                                self.world.height)) * 0.0005
         self.world.attr['humidity'][self.world.attr['humidity'] < 0] = 0
+        overflow = self.world.attr['humidity'] - 1
+        overflow[overflow < 0] = 0
+        self.world.attr['water_level'] = overflow
+        self.world.attr['humidity'][self.world.attr['humidity'] > 1] = 1
         self.t += 1
         if self.t % 50 == 0 and self.cloud.state == 'Stop':
             self.cloud.start_rain()
+
+
+class WorldSimulator(object):
+    def __init__(self, width=400, height=400):
+        self.width = width
+        self.height = height
+        self.world = World(width, height)
+        self.weather = Weather(self.world)
+
+    def reset(self):
+        # self.world.create()
+        # self.world.save()
+        self.world.load()
+
+    def step(self):
+        self.weather.step()
         return self.world.value, {}
 
 
 if __name__ == '__main__':
     from gwe.gwe import GridWorldEngine
 
-    sim = MapGenerate()
+    sim = WorldSimulator()
     sim.reset()
     gwe = GridWorldEngine(sim_obj=sim)
     gwe.render(visible=True, speed=1)
